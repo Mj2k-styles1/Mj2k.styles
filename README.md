@@ -4,29 +4,35 @@
 #include <string>
 #include <cctype>
 #include <stdexcept>
+#include <sstream>
+#include <map>
+#include <climits>
 
 using namespace std;
 
-int base26ToBase10(const string &str) {
-    int result = 0;
+long long base26ToBase10(const string &str) {
+    long long result = 0;
     for (char c : str) {
         if (isdigit(c)) {
-            result = result * 10 + (c - '0');
+            result = result * 26 + (c - '0');
         } else if (c >= 'A' && c <= 'P') {
-            result = result * 10 + (c - 'A' + 10);
+            result = result * 26 + (c - 'A' + 10);
         } else {
             throw invalid_argument("Caractère invalide en base 26.");
+        }
+        if (result > LLONG_MAX / 26) {
+            throw runtime_error("Débordement de capacité, trop grand nombre.");
         }
     }
     return result;
 }
 
-string base10ToBase26(int value) {
+string base10ToBase26(long long value) {
     if (value == 0) return "0";
 
     string result;
     while (value > 0) {
-        int remainder = value % 26;
+        long long remainder = value % 26;
         if (remainder < 10) {
             result = char('0' + remainder) + result;
         } else {
@@ -47,11 +53,36 @@ bool areParenthesesBalanced(const string &expr) {
     return balance == 0;
 }
 
-int applyOperation(int left, int right, char op) {
+long long factorial(long long n) {
+    if (n < 0) throw invalid_argument("Factoriel d'un nombre négatif.");
+    if (n > 20) throw runtime_error("Débordement de capacité avec le factoriel.");
+    long long result = 1;
+    for (int i = 1; i <= n; ++i) {
+        if (result > LLONG_MAX / i) {
+            throw runtime_error("Débordement de capacité avec le factoriel.");
+        }
+        result *= i;
+    }
+    return result;
+}
+
+long long applyOperation(long long left, long long right, char op) {
     switch (op) {
-        case '+': return left + right;
-        case '-': return left - right;
-        case '*': return left * right;
+        case '+':
+            if ((right > 0 && left > LLONG_MAX - right) || (right < 0 && left < LLONG_MIN - right)) {
+                throw runtime_error("Débordement de capacité avec l'addition.");
+            }
+            return left + right;
+        case '-':
+            if ((right < 0 && left > LLONG_MAX + right) || (right > 0 && left < LLONG_MIN + right)) {
+                throw runtime_error("Débordement de capacité avec la soustraction.");
+            }
+            return left - right;
+        case '*':
+            if (left != 0 && right > LLONG_MAX / left) {
+                throw runtime_error("Débordement de capacité avec la multiplication.");
+            }
+            return left * right;
         case '/':
             if (right == 0) throw runtime_error("Division par zéro.");
             return left / right;
@@ -59,48 +90,49 @@ int applyOperation(int left, int right, char op) {
     }
 }
 
-int evaluateRecursive(const string &expr, size_t &pos) {
-    stack<int> values;
+long long evaluate(const string &expr, map<string, long long> &variables) {
+    stack<long long> values;
     stack<char> operators;
+    stringstream ss(expr);
+    string token;
 
     auto precedence = [](char op) {
-        return (op == '*' || op == '/') ? 2 : 1;
+        if (op == '*' || op == '/') return 2;
+        if (op == '+' || op == '-') return 1;
+        return 0;
     };
 
     auto applyTopOperation = [&]() {
         if (values.size() < 2 || operators.empty()) {
             throw invalid_argument("Expression invalide.");
         }
-        int right = values.top(); values.pop();
-        int left = values.top(); values.pop();
+        long long right = values.top(); values.pop();
+        long long left = values.top(); values.pop();
         char op = operators.top(); operators.pop();
         values.push(applyOperation(left, right, op));
     };
 
-    while (pos < expr.size()) {
-        char c = expr[pos];
-
-        if (isdigit(c) || isalpha(c)) { 
-            string base26;
-            while (pos < expr.size() && (isdigit(expr[pos]) || isalpha(expr[pos]))) {
-                base26 += expr[pos++];
+    while (ss >> token) {
+        if (isdigit(token[0]) || (token[0] >= 'A' && token[0] <= 'P')) {
+            values.push(base26ToBase10(token));
+        } else if (token[0] == '(') {
+            operators.push('(');
+        } else if (token[0] == ')') {
+            while (!operators.empty() && operators.top() != '(') applyTopOperation();
+            if (!operators.empty()) operators.pop();
+        } else if (token == "!") {
+            long long val = values.top();
+            values.pop();
+            values.push(factorial(val));
+        } else if (token == "+" || token == "-" || token == "*" || token == "/") {
+            while (!operators.empty() && precedence(operators.top()) >= precedence(token[0])) applyTopOperation();
+            operators.push(token[0]);
+        } else if (isalpha(token[0])) {
+            if (variables.find(token) != variables.end()) {
+                values.push(variables[token]);
+            } else {
+                throw invalid_argument("Variable non définie : " + token);
             }
-            values.push(base26ToBase10(base26));
-        } else if (c == '(') {
-            pos++;
-            values.push(evaluateRecursive(expr, pos));
-        } else if (c == ')') {
-            while (!operators.empty()) applyTopOperation();
-            pos++;
-            break;
-        } else if (c == '+' || c == '-' || c == '*' || c == '/') {
-            while (!operators.empty() && precedence(operators.top()) >= precedence(c)) {
-                applyTopOperation();
-            }
-            operators.push(c);
-            pos++;
-        } else if (isspace(c)) {
-            pos++;
         } else {
             throw invalid_argument("Caractère invalide dans l'expression.");
         }
@@ -110,11 +142,6 @@ int evaluateRecursive(const string &expr, size_t &pos) {
 
     if (values.size() != 1) throw invalid_argument("Expression invalide.");
     return values.top();
-}
-
-int evaluate(const string &expr) {
-    size_t pos = 0;
-    return evaluateRecursive(expr, pos);
 }
 
 void processFile(const string &inputFile, const string &outputFile) {
@@ -131,6 +158,7 @@ void processFile(const string &inputFile, const string &outputFile) {
     }
 
     string line;
+    map<string, long long> variables;
     while (getline(inFile, line)) {
         try {
             if (!areParenthesesBalanced(line)) {
@@ -138,7 +166,15 @@ void processFile(const string &inputFile, const string &outputFile) {
                 continue;
             }
 
-            int result = evaluate(line);
+            size_t pos = line.find('=');
+            if (pos != string::npos) {
+                string varName = line.substr(0, pos);
+                string varValue = line.substr(pos + 1);
+                variables[varName] = evaluate(varValue, variables);
+                continue;
+            }
+
+            long long result = evaluate(line, variables);
             outFile << "Expression: " << line << "\n";
             outFile << "Résultat (Base 10): " << result << "\n";
             outFile << "Résultat (Base 26): " << base10ToBase26(result) << "\n\n";
@@ -148,16 +184,13 @@ void processFile(const string &inputFile, const string &outputFile) {
         }
     }
 
+    outFile << "Jean de la Croix et Nahun vous remercient pour votre travail\n";
+
     inFile.close();
     outFile.close();
-    cout << "Traitement terminé. Résultats enregistrés dans " << outputFile << endl;
 }
 
 int main() {
-    string inputFile = "calcul.txt"; 
-    string outputFile = "resultats.txt"; 
-
-    processFile(inputFile, outputFile);
-
+    processFile("calcul.txt", "resultat.txt");
     return 0;
 }
